@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>视频播放测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .video-card { border: 1px solid #ddd; margin: 10px 0; padding: 10px; border-radius: 5px; }
+        .video-title { font-weight: bold; margin-bottom: 5px; }
+        .video-info { color: #666; font-size: 14px; }
+        .play-button { background: #1890ff; color: white; border: none; padding: 5px 15px; border-radius: 3px; cursor: pointer; }
+        .play-button:hover { background: #40a9ff; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; }
+        .modal-content { position: relative; background: white; margin: 50px auto; padding: 20px; width: 80%; max-width: 800px; border-radius: 5px; }
+        .close-button { position: absolute; top: 10px; right: 15px; background: none; border: none; font-size: 24px; cursor: pointer; color: #999; }
+        .close-button:hover { color: #333; }
+        video { width: 100%; max-height: 400px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #f6ffed; border: 1px solid #b7eb8f; color: #52c41a; }
+        .error { background: #fff2f0; border: 1px solid #ffccc7; color: #ff4d4f; }
+    </style>
+</head>
+<body>
+    <h1>🎬 视频播放功能测试</h1>
+    <div id="status"></div>
+    <div id="videos"></div>
+    
+    <div id="videoModal" class="modal">
+        <div class="modal-content">
+            <button class="close-button" onclick="closeModal()">&times;</button>
+            <h3 id="modalTitle">视频播放</h3>
+            <video id="videoPlayer" controls></video>
+            <div id="videoInfo"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3001/api';
+        let token = localStorage.getItem('token');
+        
+        // 测试函数
+        async function testVideoFunctionality() {
+            showStatus('正在测试视频功能...', 'info');
+            
+            if (!token) {
+                showStatus('未找到token，正在尝试登录...', 'info');
+                await loginAndTest();
+            } else {
+                await loadVideos();
+            }
+        }
+        
+        async function loginAndTest() {
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: 'admin@example.com',
+                        password: 'admin123'
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    token = data.data.token;
+                    localStorage.setItem('token', token);
+                    showStatus('登录成功！正在加载视频...', 'success');
+                    await loadVideos();
+                } else {
+                    showStatus('登录失败: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showStatus('登录错误: ' + error.message, 'error');
+            }
+        }
+        
+        async function loadVideos() {
+            try {
+                showStatus('正在从B站拉取真实数据...', 'info');
+                
+                const response = await fetch(`${API_BASE}/videos/trending?platform=bilibili&limit=3`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.data.videos) {
+                    const videos = data.data.videos;
+                    showStatus(`✅ 成功获取 ${videos.length} 个视频，其中真实数据: ${videos.filter(v => v.is_real_data).length} 个`, 'success');
+                    displayVideos(videos);
+                } else {
+                    showStatus('获取视频失败: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showStatus('加载视频错误: ' + error.message, 'error');
+            }
+        }
+        
+        function displayVideos(videos) {
+            const container = document.getElementById('videos');
+            container.innerHTML = '';
+            
+            videos.forEach((video, index) => {
+                const videoCard = document.createElement('div');
+                videoCard.className = 'video-card';
+                videoCard.innerHTML = `
+                    <div class="video-title">${video.title}</div>
+                    <div class="video-info">
+                        <strong>平台:</strong> ${video.platform} | 
+                        <strong>作者:</strong> ${video.author.name} | 
+                        <strong>播放量:</strong> ${formatNumber(video.view_count)} | 
+                        <strong>点赞:</strong> ${formatNumber(video.like_count)}
+                        ${video.is_real_data ? ' | <span style="color: green;">✅ 真实数据</span>' : ' | <span style="color: orange;">⚠️ 模拟数据</span>'}
+                    </div>
+                    <div class="video-info">
+                        <strong>视频链接:</strong> <a href="${video.video_url}" target="_blank">${video.video_url}</a>
+                    </div>
+                    <div class="video-info">
+                        <strong>缩略图:</strong> <a href="${video.thumbnail_url}" target="_blank">${video.thumbnail_url}</a>
+                    </div>
+                    <button class="play-button" onclick="playVideo('${video.video_url}', '${video.title.replace(/'/g, "\\'")}', '${video.author.name}')">
+                        ▶️ 播放测试
+                    </button>
+                `;
+                container.appendChild(videoCard);
+            });
+        }
+        
+        function playVideo(videoUrl, title, author) {
+            const modal = document.getElementById('videoModal');
+            const player = document.getElementById('videoPlayer');
+            const modalTitle = document.getElementById('modalTitle');
+            const videoInfo = document.getElementById('videoInfo');
+            
+            modalTitle.textContent = title;
+            player.src = videoUrl;
+            videoInfo.innerHTML = `
+                <p><strong>作者:</strong> ${author}</p>
+                <p><strong>视频链接:</strong> <a href="${videoUrl}" target="_blank">${videoUrl}</a></p>
+                <p style="color: #999; font-size: 12px;">注意: 由于B站视频链接需要真实播放环境，此测试主要验证弹窗关闭功能</p>
+            `;
+            
+            modal.style.display = 'block';
+            
+            // 尝试播放视频
+            player.play().catch(e => {
+                videoInfo.innerHTML += `<p style="color: orange;">⚠️ 视频播放失败 (预期行为): ${e.message}</p>`;
+            });
+        }
+        
+        function closeModal() {
+            const modal = document.getElementById('videoModal');
+            const player = document.getElementById('videoPlayer');
+            
+            modal.style.display = 'none';
+            player.pause();
+            player.src = '';
+            
+            showStatus('✅ 弹窗关闭成功！关闭按钮功能正常', 'success');
+        }
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+        }
+        
+        function formatNumber(num) {
+            if (num >= 10000) {
+                return (num / 10000).toFixed(1) + '万';
+            }
+            return num.toString();
+        }
+        
+        // 点击模态框外部关闭
+        window.onclick = function(event) {
+            const modal = document.getElementById('videoModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+        
+        // ESC键关闭
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeModal();
+            }
+        });
+        
+        // 页面加载完成后开始测试
+        window.onload = function() {
+            testVideoFunctionality();
+        };
+    </script>
+</body>
+</html>
