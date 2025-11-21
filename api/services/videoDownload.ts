@@ -15,6 +15,9 @@ export interface DownloadOptions {
   renamePattern?: string;
   createFolder?: boolean;
   platform?: string;
+  downloadSubtitles?: boolean;
+  subtitleLangs?: string[];
+  embedSubtitles?: boolean;
 }
 
 export interface DownloadProgress {
@@ -175,6 +178,22 @@ export class VideoDownloadService {
         args.push('--add-header', 'Referer:https://www.xiaohongshu.com/');
         args.push('--add-header', 'Accept-Language: zh-CN,zh;q=0.9');
         args.push('--cookies-from-browser', `${browser}${profile}`);
+      }
+      if (options.platform === 'youtube') {
+        args.push('--add-header', 'Referer:https://www.youtube.com/');
+        args.push('--add-header', 'Accept-Language: zh-CN,zh;q=0.9');
+        args.push('--cookies-from-browser', `${browser}${profile}`);
+        if (options.downloadSubtitles) {
+          const langs = (options.subtitleLangs && options.subtitleLangs.length > 0) ? options.subtitleLangs : ['en','zh-Hans','zh-Hant'];
+          args.push('--write-auto-sub');
+          args.push('--write-sub');
+          args.push('--sub-lang', langs.join(','));
+          args.push('--sub-format', 'srt');
+          args.push('--convert-subs', 'srt');
+          if (options.embedSubtitles) {
+            args.push('--embed-subs');
+          }
+        }
       }
 
       // 质量设置（优先选择分离视频+音频，带回退）

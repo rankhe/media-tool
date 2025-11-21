@@ -4,6 +4,8 @@ import { DatabaseService } from '../config/database.js';
 import { responseUtils } from '../utils/index.js';
 import { getVideoPublishQueue } from '../config/redis.js';
 import { authenticateToken } from './auth.js';
+import { taskProcessor } from '../services/taskProcessor.js';
+import { Readable } from 'stream';
 
 const router = express.Router();
 
@@ -28,7 +30,8 @@ router.get('/', authenticateToken, async (req, res) => {
 // 创建发布任务
 router.post('/', authenticateToken, [
   body('title').isString().isLength({ min: 1, max: 200 }),
-  body('videoUrl').isString().isURL(),
+  body('videoUrl').optional().isString(),
+  body('videoId').optional().isUUID(),
   body('platforms').isArray({ min: 1 }),
   body('platforms.*').isIn(['douyin', 'kuaishou', 'xiaohongshu', 'bilibili', 'wechat']),
   body('scheduledTime').optional().isISO8601(),
@@ -43,13 +46,30 @@ router.post('/', authenticateToken, [
     }
 
     const userId = req.user.userId;
-    const { title, videoUrl, platforms, scheduledTime, description, tags } = req.body;
+    const { title, videoUrl, videoId, platforms, scheduledTime, description, tags } = req.body;
+
+    // 解析视频来源：优先 videoId，其次 videoUrl
+    let resolvedVideoPath: string | null = null;
+    let resolvedVideoId: string | null = null;
+    if (videoId) {
+      const { data: video } = await DatabaseService.getVideoById(videoId);
+      if (!video || video.user_id !== userId) {
+        return res.status(404).json(responseUtils.error('Video not found or access denied', 'VIDEO_NOT_FOUND'));
+      }
+      resolvedVideoPath = video.local_path || video.video_url || null;
+      resolvedVideoId = video.id;
+    } else if (videoUrl) {
+      resolvedVideoPath = videoUrl;
+    } else {
+      return res.status(400).json(responseUtils.error('Missing video source', 'MISSING_VIDEO'));
+    }
 
     // 创建发布任务
     const { data: task, error } = await DatabaseService.createPublishTask({
       user_id: userId,
       title,
-      video_url: videoUrl,
+      video_url: resolvedVideoPath,
+      video_id: resolvedVideoId,
       platforms,
       status: scheduledTime ? 'pending' : 'processing',
       scheduled_time: scheduledTime || null,
@@ -63,20 +83,25 @@ router.post('/', authenticateToken, [
       return res.status(500).json(responseUtils.error('Failed to create publish task', 'CREATE_ERROR'));
     }
 
-    // 如果不是定时发布，立即添加到发布队列
+    // 如果不是定时发布，立即调用任务处理器执行发布
     if (!scheduledTime) {
-      const videoPublishQueue = getVideoPublishQueue();
-      if (videoPublishQueue) {
-        await videoPublishQueue.add('publish', {
-          taskId: task.id,
-          title,
-          videoUrl,
-          platforms,
-          description,
-          tags
-        });
-      } else {
-        console.log('⚠️  Redis not available, skipping queue processing');
+      try {
+        for (const platform of platforms) {
+          await taskProcessor.addPublishTask({
+            taskId: task.id,
+            filePath: resolvedVideoPath,
+            target_config: {
+              platform,
+              accountId: userId,
+              title,
+              description,
+              tags,
+              visibility: 'public'
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Publish processor error:', e);
       }
     }
 

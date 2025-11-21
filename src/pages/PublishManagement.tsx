@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, Table, Modal, Form, Select, Input, DatePicker, Space, Tag, message } from 'antd';
+import { Card, Button, Table, Modal, Form, Select, Input, DatePicker, Space, Tag, message, Upload } from 'antd';
+import type { UploadProps } from 'antd';
+import { InboxOutlined } from '@ant-design/icons';
+import { videoProcessingAPI } from '../services/api';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SendOutlined } from '@ant-design/icons';
 import { publishService } from '../services/publishService';
 
@@ -48,6 +51,8 @@ export const PublishManagement: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<PublishTask | null>(null);
   const [form] = Form.useForm();
+  const [uploading, setUploading] = useState(false);
+  const [uploadedInfo, setUploadedInfo] = useState<{ videoId: string; filePath: string; fileName: string } | null>(null);
 
   useEffect(() => {
     fetchTasks();
@@ -118,6 +123,8 @@ export const PublishManagement: React.FC = () => {
       const taskData = {
         ...values,
         scheduledTime: values.scheduledTime ? values.scheduledTime.toISOString() : undefined,
+        videoUrl: uploadedInfo?.filePath || values.videoUrl,
+        videoId: uploadedInfo?.videoId,
       };
 
       if (editingTask) {
@@ -247,7 +254,7 @@ export const PublishManagement: React.FC = () => {
 
       <Modal
         title={editingTask ? '编辑发布任务' : '创建发布任务'}
-        visible={modalVisible}
+        open={modalVisible}
         onOk={handleModalOk}
         onCancel={() => setModalVisible(false)}
         width={700}
@@ -268,9 +275,50 @@ export const PublishManagement: React.FC = () => {
           <Form.Item
             name="videoUrl"
             label="视频文件"
-            rules={[{ required: true, message: '请选择视频文件' }]}
+            rules={[{ required: true, message: '请选择视频文件或上传' }]}
           >
-            <Input placeholder="输入视频文件路径或URL" />
+            <Input placeholder="输入视频文件URL（或使用下方上传）" />
+          </Form.Item>
+
+          <Form.Item label="或上传本地视频">
+            <Upload.Dragger
+              name="video"
+              multiple={false}
+              accept="video/*"
+              beforeUpload={() => false}
+              showUploadList={false}
+              disabled={uploading}
+              customRequest={async ({ file, onSuccess, onError }: any) => {
+                try {
+                  setUploading(true);
+                  const formData = new FormData();
+                  formData.append('video', file as File);
+                  formData.append('title', form.getFieldValue('title') || '上传的视频');
+                  const res = await videoProcessingAPI.uploadVideo(formData);
+                  const payload = (res && res.data) ? res.data : res;
+                  const info = {
+                    videoId: payload.video_id,
+                    filePath: payload.file_path,
+                    fileName: payload.file_name,
+                  };
+                  setUploadedInfo(info);
+                  form.setFieldsValue({ videoUrl: info.filePath });
+                  message.success('视频上传成功');
+                  onSuccess && onSuccess(payload);
+                } catch (e: any) {
+                  message.error('视频上传失败');
+                  onError && onError(e);
+                } finally {
+                  setUploading(false);
+                }
+              }}
+            >
+              <p className="ant-upload-drag-icon">
+                <InboxOutlined />
+              </p>
+              <p className="ant-upload-text">点击或拖拽上传本地视频文件</p>
+              <p className="ant-upload-hint">支持常见视频格式，最大500MB</p>
+            </Upload.Dragger>
           </Form.Item>
 
           <Form.Item

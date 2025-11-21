@@ -5,6 +5,7 @@
 import axios from 'axios';
 import fs from 'fs/promises';
 import FormData from 'form-data';
+import { bilibiliPublisher } from './bilibiliPublisher.js';
 
 export interface PublishOptions {
   videoPath: string;
@@ -256,18 +257,37 @@ export class VideoPublishService {
    * 哔哩哔哩发布
    */
   private async publishToBilibili(options: PublishOptions): Promise<PublishResult> {
-    // 模拟B站发布
-    const mockResult: PublishResult = {
+    const useAutomation = process.env.BILIBILI_USE_AUTOMATION === 'true';
+    if (useAutomation) {
+      const r = await bilibiliPublisher.publish({
+        videoPath: options.videoPath,
+        title: options.title,
+        description: options.description,
+        tags: options.tags,
+      });
+      if (r && (r as any).success) {
+        return {
+          success: true,
+          platform: 'bilibili',
+          publishedUrl: undefined,
+          videoId: undefined,
+          publishedAt: new Date(),
+        };
+      } else {
+        return {
+          success: false,
+          platform: 'bilibili',
+          error: (r as any)?.error || 'Upload failed',
+        };
+      }
+    }
+    return {
       success: true,
       platform: 'bilibili',
       publishedUrl: `https://www.bilibili.com/video/${Date.now()}`,
       videoId: `bilibili_${Date.now()}`,
       publishedAt: new Date()
     };
-    
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    
-    return mockResult;
   }
 
   /**

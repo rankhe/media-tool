@@ -17,7 +17,8 @@ export interface PublishTask {
 
 export interface CreatePublishTaskData {
   title: string;
-  videoUrl: string;
+  videoUrl?: string;
+  videoId?: string;
   platforms: string[];
   scheduledTime?: string;
   description?: string;
@@ -33,7 +34,8 @@ export const publishService = {
   async getPublishTasks(): Promise<PublishTask[]> {
     try {
       const response = await api.get('/publish-tasks');
-      return response.data;
+      const payload = response.data;
+      return (payload && payload.data) ? payload.data : payload;
     } catch (error) {
       // 如果API不可用，返回模拟数据
       console.warn('API unavailable, using mock data for publish tasks');
@@ -45,7 +47,8 @@ export const publishService = {
   async getPublishTask(id: string): Promise<PublishTask> {
     try {
       const response = await api.get(`/publish-tasks/${id}`);
-      return response.data;
+      const payload = response.data;
+      return (payload && payload.data) ? payload.data : payload;
     } catch (error) {
       const tasks = await this.getPublishTasks();
       const task = tasks.find(t => t.id === id);
@@ -60,7 +63,8 @@ export const publishService = {
   async createPublishTask(data: CreatePublishTaskData): Promise<PublishTask> {
     try {
       const response = await api.post('/publish-tasks', data);
-      return response.data;
+      const payload = response.data;
+      return (payload && payload.data) ? payload.data : payload;
     } catch (error) {
       // 如果API不可用，创建模拟数据
       console.warn('API unavailable, creating mock publish task');
@@ -79,7 +83,8 @@ export const publishService = {
   async updatePublishTask(id: string, data: UpdatePublishTaskData): Promise<PublishTask> {
     try {
       const response = await api.put(`/publish-tasks/${id}`, data);
-      return response.data;
+      const payload = response.data;
+      return (payload && payload.data) ? payload.data : payload;
     } catch (error) {
       // 如果API不可用，返回更新后的模拟数据
       console.warn('API unavailable, updating mock publish task');
@@ -147,7 +152,8 @@ export const publishService = {
   }> {
     try {
       const response = await api.get('/publish-tasks/stats');
-      return response.data;
+      const payload = response.data;
+      return (payload && payload.data) ? payload.data : payload;
     } catch (error) {
       // 如果API不可用，返回模拟统计数据
       console.warn('API unavailable, using mock publish stats');

@@ -125,6 +125,9 @@ export class TaskProcessor {
           case 'bilibili':
             videoUrl = `https://www.bilibili.com/video/${sourceConfig.videoId}`;
             break;
+          case 'youtube':
+            videoUrl = `https://www.youtube.com/watch?v=${sourceConfig.videoId}`;
+            break;
           case 'wechat':
             videoUrl = sourceConfig.videoId;
             break;
@@ -172,7 +175,10 @@ export class TaskProcessor {
           extractAudio: sourceConfig.extractAudio || false,
           renamePattern: targetConfig.renamePattern || '{title}_{id}',
           createFolder: targetConfig.createFolder !== false,
-          platform: sourceConfig.platform
+          platform: sourceConfig.platform,
+          downloadSubtitles: !!sourceConfig.downloadSubtitles,
+          subtitleLangs: sourceConfig.subtitleLangs,
+          embedSubtitles: !!sourceConfig.embedSubtitles
         },
         (progress: DownloadProgress) => {
           // 更新进度

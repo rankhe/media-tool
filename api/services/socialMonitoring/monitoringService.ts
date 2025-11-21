@@ -27,17 +27,13 @@ export class MonitoringService {
           AND smp.is_active = true
           AND (mu.last_check_at IS NULL OR mu.last_check_at <= NOW() - INTERVAL '1 minute' * mu.check_frequency_minutes)
       `);
-      
-      const monitoringUsers = result.rows;
-      logger.info(`Found ${monitoringUsers.length} users to check`);
-      
-      // Process each user
-      for (const user of monitoringUsers) {
+      for (const user of result.rows) {
         try {
           await this.checkUser(user);
-        } catch (error) {
+          await this.updateStatistics(user.user_id, user.platform, 'total_checks');
+        } catch (error: any) {
           logger.error(`Error checking user ${user.id}:`, error);
-          await this.updateUserError(user.id, error.message);
+          await this.updateUserError(user.id, String(error?.message || error));
         }
       }
       

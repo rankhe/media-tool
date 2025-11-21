@@ -33,6 +33,7 @@ import proxyRoutes from './routes/proxy.js'
 import topCreatorsRoutes from './routes/top-creators.js'
 import wechatPublicRoutes from './routes/wechat-public.js'
 import wechatRoutes from './routes/wechat.js'
+import ytb2biliRoutes from './routes/ytb2bili.js'
 
 // for esm mode
 const __filename = fileURLToPath(import.meta.url)
@@ -155,6 +156,7 @@ app.use('/api/proxy', proxyRoutes)
 app.use('/api/top-creators', topCreatorsRoutes)
 app.use('/api/wechat-public', wechatPublicRoutes)
 app.use('/api/wechat', wechatRoutes)
+app.use('/api/ytb2bili', ytb2biliRoutes)
 app.use('/', migrateRoutes)
 
 // 全局错误处理
@@ -188,16 +190,17 @@ export async function initializeServices() {
   try {
     // 连接Redis
     await connectRedis()
-    
-    // Start social media monitoring scheduler
-    const { monitoringScheduler } = await import('./services/socialMonitoring/scheduler.js')
-    monitoringScheduler.start()
-    console.log('✅ Social media monitoring scheduler started')
-    
+    try {
+      const { monitoringScheduler } = await import('./services/socialMonitoring/scheduler.js')
+      monitoringScheduler.start()
+      console.log('✅ Social media monitoring scheduler started')
+    } catch (e) {
+      console.warn('⚠️ Monitoring scheduler failed to start, continuing without it:', e?.message || e)
+    }
     console.log('✅ All services initialized successfully')
   } catch (error) {
     console.error('❌ Service initialization failed:', error)
-    process.exit(1)
+    throw error
   }
 }
 
