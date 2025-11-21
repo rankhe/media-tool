@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { useStore } from '../store';
 
 // API基础配置
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
@@ -31,9 +32,22 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const data = error.response?.data;
+    if (status === 401) {
       localStorage.removeItem('token');
-      window.location.href = '/login';
+      try { useStore.getState().setUser(null); } catch {}
+      if (window.location.pathname !== '/login') window.location.href = '/login';
+    } else if (status === 403) {
+      const err = data?.error;
+      const isTokenInvalid = typeof err === 'string' 
+        ? /invalid|expired/i.test(err)
+        : /invalid|expired/i.test(String(err?.message || '')) || /TOKEN/i.test(String(err?.code || ''));
+      if (isTokenInvalid) {
+        localStorage.removeItem('token');
+        try { useStore.getState().setUser(null); } catch {}
+        if (window.location.pathname !== '/login') window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
@@ -114,6 +128,11 @@ export const videoAPI = {
     const response = await api.get('/videos/trending', { 
       params: { platform, limit } 
     });
+    return response.data;
+  },
+
+  clearDiscoveryCache: async () => {
+    const response = await api.delete('/videos/cache');
     return response.data;
   },
 };
@@ -229,6 +248,52 @@ export const statsAPI = {
 
   getPlatformStats: async () => {
     const response = await api.get('/stats/platforms');
+    return response.data;
+  },
+};
+
+// 微信公众号热门API
+export const wechatAPI = {
+  explodes: async (limit?: number) => {
+    const response = await api.get('/wechat/explodes', { params: { limit } });
+    return response.data;
+  },
+
+  qualityAccounts: async (limit?: number) => {
+    const response = await api.get('/wechat/quality-accounts', { params: { limit } });
+    return response.data;
+  },
+
+  hotArticles: async (limit?: number) => {
+    const response = await api.get('/wechat/hot-articles', { params: { limit } });
+    return response.data;
+  },
+
+  overview: async () => {
+    const response = await api.get('/wechat/overview');
+    return response.data;
+  },
+};
+
+// 微信公众号公开API（无鉴权）
+export const wechatPublicAPI = {
+  explodes: async (limit?: number) => {
+    const response = await api.get('/wechat-public/explodes', { params: { limit } });
+    return response.data;
+  },
+
+  qualityAccounts: async (limit?: number) => {
+    const response = await api.get('/wechat-public/quality-accounts', { params: { limit } });
+    return response.data;
+  },
+
+  hotArticles: async (limit?: number) => {
+    const response = await api.get('/wechat-public/hot-articles', { params: { limit } });
+    return response.data;
+  },
+
+  overview: async () => {
+    const response = await api.get('/wechat-public/overview');
     return response.data;
   },
 };

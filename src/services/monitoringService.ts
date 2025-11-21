@@ -227,6 +227,30 @@ const monitoringService = {
     const response = await api.post('/monitoring-admin/scheduler/stop');
     return response.data;
   },
+
+  publishToZhihu: async (payload: {
+    type: 'idea' | 'article';
+    title?: string;
+    content: string;
+    images?: string[];
+    source_url?: string;
+  }) => {
+    const response = await api.post('/zhihu/publish', payload);
+    return response.data;
+  },
+
+  setZhihuConfig: async (data: { cookie_string?: string; cookies_json_file?: File }) => {
+    const form = new FormData();
+    if (data.cookie_string) form.append('cookie_string', data.cookie_string);
+    if (data.cookies_json_file) form.append('cookies_json', data.cookies_json_file);
+    const response = await api.post('/zhihu/config', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+    return response.data;
+  },
+
+  getZhihuConfigStatus: async () => {
+    const response = await api.get('/zhihu/config/status');
+    return response.data;
+  },
 };
 
 export default monitoringService;

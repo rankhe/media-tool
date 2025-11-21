@@ -2,6 +2,7 @@ import axios from 'axios';
 import { logger } from '../../utils/logger';
 import { Pool } from 'pg';
 import { WeiboCrawlerService } from './weiboCrawlerService';
+import { BilibiliCrawlerService } from '../platformCrawlers/bilibiliCrawler';
 
 const pool = new Pool({
   user: process.env.DB_USER || 'postgres',
@@ -59,8 +60,10 @@ export class PlatformService {
   
   async getUserInfo(platform: string, userId: string): Promise<PlatformUserInfo | null> {
     try {
+      if (platform === 'bilibili') {
+        return await this.getBilibiliUserInfo(userId);
+      }
       const config = await this.getPlatformConfig(platform);
-      
       switch (platform) {
         case 'weibo':
           return await this.getWeiboUserInfo(config, userId);
@@ -90,6 +93,33 @@ export class PlatformService {
     } catch (error) {
       logger.error(`Error fetching user posts for ${platform}:`, error);
       return [];
+    }
+  }
+
+  private async getBilibiliUserInfo(mid: string): Promise<PlatformUserInfo> {
+    const bilibili = new BilibiliCrawlerService();
+    try {
+      const user = await bilibili.getUserInfo(mid);
+      return {
+        userId: user.id,
+        username: user.username || user.display_name || mid,
+        displayName: user.display_name || user.username || mid,
+        avatarUrl: user.avatar_url || '',
+        followerCount: user.follower_count || 0,
+        verified: !!user.verified,
+        bio: user.bio || ''
+      };
+    } catch (e) {
+      logger.warn(`Bilibili user info fetch failed for ${mid}:`, e);
+      return {
+        userId: mid,
+        username: mid,
+        displayName: mid,
+        avatarUrl: '',
+        followerCount: 0,
+        verified: false,
+        bio: ''
+      };
     }
   }
   

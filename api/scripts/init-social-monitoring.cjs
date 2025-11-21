@@ -52,6 +52,28 @@ async function initSocialMonitoring() {
     `);
     console.log('✅ Monitoring users table created');
     
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS top_creators (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        platform VARCHAR(50) NOT NULL,
+        creator_user_id VARCHAR(200) NOT NULL,
+        creator_username VARCHAR(200),
+        creator_display_name VARCHAR(200),
+        avatar_url TEXT,
+        follower_count INTEGER DEFAULT 0,
+        verified BOOLEAN DEFAULT false,
+        bio TEXT,
+        category VARCHAR(100),
+        score INTEGER DEFAULT 0,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, platform, creator_user_id)
+      )
+    `);
+    console.log('✅ Top creators table created');
+    
     // 创建监控到的帖子表
     await client.query(`
       CREATE TABLE IF NOT EXISTS monitored_posts (

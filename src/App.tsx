@@ -5,6 +5,7 @@ import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { Dashboard } from './pages/Dashboard';
 import { VideoDiscovery } from './pages/VideoDiscovery';
+import WeChatDiscovery from './pages/WeChatDiscovery';
 import TaskManagement from './pages/TaskManagement';
 import AccountManagement from './pages/AccountManagement';
 import VideoEditor from './pages/VideoEditor';
@@ -61,6 +62,7 @@ function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="accounts" element={<AccountManagement />} />
           <Route path="discover" element={<VideoDiscovery />} />
+          <Route path="wechat" element={<WeChatDiscovery />} />
           <Route path="tasks" element={<TaskManagement />} />
           <Route path="editor" element={<VideoEditor />} />
           <Route path="publish" element={<PublishManagement />} />

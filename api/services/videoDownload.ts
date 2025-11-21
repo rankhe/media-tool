@@ -14,6 +14,7 @@ export interface DownloadOptions {
   extractAudio?: boolean;
   renamePattern?: string;
   createFolder?: boolean;
+  platform?: string;
 }
 
 export interface DownloadProgress {
@@ -34,6 +35,7 @@ export interface DownloadResult {
 
 export class VideoDownloadService {
   private static instance: VideoDownloadService;
+  private ytDlpCmd: { cmd: string; baseArgs: string[] } | null = null;
 
   static getInstance(): VideoDownloadService {
     if (!this.instance) {
@@ -46,19 +48,27 @@ export class VideoDownloadService {
    * 检查yt-dlp是否可用
    */
   async checkYtDlp(): Promise<boolean> {
-    try {
-      return new Promise((resolve) => {
-        const process = spawn('yt-dlp', ['--version']);
-        process.on('close', (code) => {
-          resolve(code === 0);
+    const candidates: Array<{ cmd: string; baseArgs: string[] }> = [];
+    const envPath = process.env.YTDLP_PATH;
+    if (envPath) candidates.push({ cmd: envPath, baseArgs: [] });
+    candidates.push({ cmd: 'yt-dlp', baseArgs: [] });
+    candidates.push({ cmd: 'yt-dlp.exe', baseArgs: [] });
+    candidates.push({ cmd: 'youtube-dl', baseArgs: [] });
+    candidates.push({ cmd: 'python', baseArgs: ['-m', 'yt_dlp'] });
+    for (const c of candidates) {
+      try {
+        const ok = await new Promise<boolean>((resolve) => {
+          const p = spawn(c.cmd, [...c.baseArgs, '--version']);
+          p.on('close', (code) => resolve(code === 0));
+          p.on('error', () => resolve(false));
         });
-        process.on('error', () => {
-          resolve(false);
-        });
-      });
-    } catch (error) {
-      return false;
+        if (ok) {
+          this.ytDlpCmd = c;
+          return true;
+        }
+      } catch {}
     }
+    return false;
   }
 
   /**
@@ -70,10 +80,12 @@ export class VideoDownloadService {
         url,
         '--dump-json',
         '--no-warnings',
-        '--ignore-errors'
+        '--ignore-errors',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       ];
 
-      const process = spawn('yt-dlp', args);
+      const cmd = this.ytDlpCmd || { cmd: 'yt-dlp', baseArgs: [] };
+      const process = spawn(cmd.cmd, [...cmd.baseArgs, ...args]);
       let output = '';
       let errorOutput = '';
 
@@ -88,8 +100,14 @@ export class VideoDownloadService {
       process.on('close', (code) => {
         if (code === 0) {
           try {
-            const info = JSON.parse(output.trim());
-            resolve(info);
+            const lines = output.trim().split(/\r?\n/).filter(Boolean);
+            for (const line of lines) {
+              try {
+                const obj = JSON.parse(line);
+                if (obj) return resolve(obj);
+              } catch {}
+            }
+            throw new Error('No JSON info parsed');
           } catch (error) {
             reject(new Error('Failed to parse video info'));
           }
@@ -132,26 +150,55 @@ export class VideoDownloadService {
         '-o', outputTemplate,
         '--no-warnings',
         '--ignore-errors',
-        '--newline'
+        '--newline',
+        '--verbose'
       ];
 
-      // 质量设置
+      // 基础UA
+      args.push('--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+      // 平台特定头（提升站点兼容性）
+      const browser = process.env.YTDLP_BROWSER || 'chrome';
+      const profile = process.env.YTDLP_PROFILE ? `:${process.env.YTDLP_PROFILE}` : '';
+      if (options.platform === 'bilibili') {
+        args.push('--add-header', 'Referer:https://www.bilibili.com/');
+        args.push('--add-header', 'Accept-Language: zh-CN,zh;q=0.9');
+        args.push('--cookies-from-browser', `${browser}${profile}`);
+        args.push('--no-check-certificate');
+      }
+      if (options.platform === 'douyin') {
+        args.push('--add-header', 'Referer:https://www.douyin.com/');
+        args.push('--add-header', 'Accept-Language: zh-CN,zh;q=0.9');
+        args.push('--cookies-from-browser', `${browser}${profile}`);
+      }
+      if (options.platform === 'xiaohongshu') {
+        args.push('--add-header', 'Referer:https://www.xiaohongshu.com/');
+        args.push('--add-header', 'Accept-Language: zh-CN,zh;q=0.9');
+        args.push('--cookies-from-browser', `${browser}${profile}`);
+      }
+
+      // 质量设置（优先选择分离视频+音频，带回退）
       if (options.quality) {
         switch (options.quality) {
           case 'highest':
-            args.push('-f', 'best');
+            args.push('-f', 'bv*+ba/best');
             break;
           case 'high':
-            args.push('-f', 'best[height<=1080]');
+            args.push('-f', 'bv*[height<=1080]+ba/best');
             break;
           case 'medium':
-            args.push('-f', 'best[height<=720]');
+            args.push('-f', 'bv*[height<=720]+ba/best');
             break;
           case 'low':
-            args.push('-f', 'best[height<=480]');
+            args.push('-f', 'bv*[height<=480]+ba/best');
             break;
         }
+      } else {
+        args.push('-f', 'bv*+ba/best');
       }
+
+      // 合并输出格式
+      args.push('--merge-output-format', 'mp4');
 
       // 提取音频
       if (options.extractAudio) {
@@ -162,7 +209,8 @@ export class VideoDownloadService {
       args.push('--print-traffic');
 
       return new Promise((resolve, reject) => {
-        const process = spawn('yt-dlp', args);
+        const cmd = this.ytDlpCmd || { cmd: 'yt-dlp', baseArgs: [] };
+        const process = spawn(cmd.cmd, [...cmd.baseArgs, ...args]);
         let lastProgress: DownloadProgress = {
           percent: 0,
           size: '',
@@ -191,8 +239,10 @@ export class VideoDownloadService {
           }
         });
 
+        let errorOutputAll = '';
         process.stderr.on('data', (data) => {
           const errorOutput = data.toString();
+          errorOutputAll += errorOutput;
           console.error('yt-dlp error:', errorOutput);
         });
 
@@ -225,7 +275,68 @@ export class VideoDownloadService {
               });
             }
           } else {
-            reject(new Error(`Download failed with code ${code}`));
+            const needRetryWithoutCookies = /Could not copy Chrome cookie database|PermissionError/i.test(errorOutputAll);
+            if (needRetryWithoutCookies) {
+              const base = [...args];
+              const idx = base.findIndex(a => a === '--cookies-from-browser');
+              if (idx !== -1) {
+                base.splice(idx, 2);
+              }
+              const retryProc = spawn(cmd.cmd, [...cmd.baseArgs, ...base]);
+              let retryErr = '';
+              retryProc.stdout.on('data', (data) => {
+                const output = data.toString();
+                const progressMatch = output.match(/(\d+(?:\.\d+)?)%\s+of\s+(\S+)\s+at\s+(\S+)\s+ETA\s+(\S+)/);
+                if (progressMatch) {
+                  lastProgress = {
+                    percent: parseFloat(progressMatch[1]),
+                    size: progressMatch[2],
+                    speed: progressMatch[3],
+                    eta: progressMatch[4],
+                    status: 'downloading'
+                  };
+                  if (onProgress) {
+                    onProgress(lastProgress);
+                  }
+                }
+              });
+              retryProc.stderr.on('data', (data) => {
+                retryErr += data.toString();
+                console.error('yt-dlp error:', data.toString());
+              });
+              retryProc.on('close', async (rcode) => {
+                if (rcode === 0) {
+                  try {
+                    const files = await fs.readdir(options.outputPath);
+                    const downloadedFile = files.find(file => 
+                      file.includes('.mp4') || file.includes('.webm') || 
+                      file.includes('.mkv') || file.includes('.mp3')
+                    );
+                    if (downloadedFile) {
+                      const filePath = path.join(options.outputPath, downloadedFile);
+                      resolve({
+                        success: true,
+                        filePath
+                      });
+                    } else {
+                      resolve({
+                        success: true,
+                        message: 'Download completed but file not found'
+                      });
+                    }
+                  } catch (error) {
+                    resolve({
+                      success: true,
+                      message: 'Download completed'
+                    });
+                  }
+                } else {
+                  reject(new Error(`yt-dlp error (code ${rcode}): ${retryErr.trim() || 'unknown'}`));
+                }
+              });
+            } else {
+              reject(new Error(`yt-dlp error (code ${code}): ${errorOutputAll.trim() || 'unknown'}`));
+            }
           }
         });
 
@@ -246,7 +357,8 @@ export class VideoDownloadService {
    */
   async getSupportedPlatforms(): Promise<string[]> {
     try {
-      const process = spawn('yt-dlp', ['--list-extractors']);
+      const cmd = this.ytDlpCmd || { cmd: 'yt-dlp', baseArgs: [] };
+      const process = spawn(cmd.cmd, [...cmd.baseArgs, '--list-extractors']);
       let output = '';
 
       process.stdout.on('data', (data) => {

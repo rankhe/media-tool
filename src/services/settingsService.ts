@@ -191,7 +191,7 @@ export const settingsService = {
   getDefaultSettings(): SettingsData {
     return {
       general: {
-        siteName: '短视频搬运工具',
+        siteName: 'media-tool',
         siteDescription: '专业的短视频内容管理和发布平台',
         language: 'zh-CN',
         timezone: 'Asia/Shanghai',

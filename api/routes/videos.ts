@@ -139,7 +139,7 @@ const upload = multer({
 
 // 发现热门视频
 router.get('/discover', authenticateToken, [
-  query('platform').optional().isIn(['douyin', 'kuaishou', 'xiaohongshu', 'bilibili', 'wechat']),
+  query('platform').isIn(['douyin', 'kuaishou', 'xiaohongshu', 'bilibili', 'wechat']),
   query('category').optional().isString(),
   query('limit').optional().isInt({ min: 1, max: 100 }),
   query('page').optional().isInt({ min: 1 })
@@ -150,68 +150,23 @@ router.get('/discover', authenticateToken, [
       return res.status(400).json(responseUtils.error('Validation failed', 'VALIDATION_ERROR'));
     }
 
-    const { platform, category, limit = 20, page = 1 } = req.query;
+    const { platform, category, limit = 20, page = 1, nocache } = req.query as any;
 
-    // 尝试使用真实数据，如果失败则回退到模拟数据
-    try {
-      const platformManager = PlatformManager.getInstance();
-      const targetPlatforms = platform ? [platform] : [];
-      const realVideos = await platformManager.getTrendingFromAll(targetPlatforms, category as string, Number(limit));
-      
-      if (realVideos.length > 0) {
-        return res.json(responseUtils.success({
-          videos: realVideos,
-          pagination: {
-            total: realVideos.length * 5, // 估算总数
-            page: Number(page),
-            limit: Number(limit),
-            pages: Math.ceil((realVideos.length * 5) / Number(limit))
-          }
-        }, 'Videos discovered successfully with real data'));
-      }
-    } catch (realDataError) {
-      console.warn('Failed to fetch real data, falling back to mock data:', realDataError);
-    }
-
-    // 回退到模拟数据
-    const mockVideos = Array.from({ length: Number(limit) }, (_, i) => {
-      const platforms = platform ? [platform] : ['douyin', 'kuaishou', 'xiaohongshu'];
-      const selectedPlatform = platforms[Math.floor(Math.random() * platforms.length)];
-      const categories = category ? [category] : ['entertainment', 'education', 'lifestyle', 'food', 'travel', 'technology', 'fashion'];
-      const selectedCategory = categories[Math.floor(Math.random() * categories.length)];
-      
-      return {
-        id: `video_${Date.now()}_${i}`,
-        platform: selectedPlatform,
-        title: `${getRandomVideoTitle(selectedCategory, selectedPlatform)} ${i + 1}`,
-        description: getRandomVideoDescription(selectedCategory, selectedPlatform),
-        author: {
-          id: `author_${i}`,
-          name: `创作者${i + 1}`,
-          avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=author${i}`,
-          follower_count: Math.floor(Math.random() * 100000) + 1000,
-          verified: Math.random() > 0.7
-        },
-        thumbnail_url: `https://picsum.photos/320/180?random=${i + 1}`,
-        video_url: `https://example.com/video_${i}.mp4`,
-        duration: Math.floor(Math.random() * 300) + 30,
-        view_count: Math.floor(Math.random() * 100000) + 1000,
-        like_count: Math.floor(Math.random() * 10000) + 100,
-        comment_count: Math.floor(Math.random() * 1000) + 10,
-        share_count: Math.floor(Math.random() * 500) + 5,
-        created_at: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString(),
-        tags: getRandomTags(selectedCategory),
-        category: selectedCategory
-      };
-    });
-
-    res.json(responseUtils.success({
-      videos: mockVideos,
+    const platformManager = PlatformManager.getInstance();
+    const targetPlatforms = [platform as string];
+    const realVideos = await platformManager.getTrendingFromAll(
+      targetPlatforms,
+      category as string,
+      Number(limit),
+      { nocache: ['1','true'].includes(String(nocache).toLowerCase()) }
+    );
+    return res.json(responseUtils.success({
+      videos: realVideos,
       pagination: {
-        total: 100,
+        total: realVideos.length,
         page: Number(page),
         limit: Number(limit),
-        pages: 5
+        pages: Math.ceil((realVideos.length || 0) / Number(limit))
       }
     }, 'Videos discovered successfully'));
 
@@ -223,7 +178,7 @@ router.get('/discover', authenticateToken, [
 
 // 搜索视频
 router.get('/search', authenticateToken, [
-  query('q').isString().isLength({ min: 1, max: 100 }),
+  query('q').optional().isString().isLength({ min: 0, max: 100 }),
   query('platform').optional().isIn(['douyin', 'kuaishou', 'xiaohongshu', 'bilibili', 'wechat']),
   query('limit').optional().isInt({ min: 1, max: 100 })
 ], async (req, res) => {
@@ -233,62 +188,40 @@ router.get('/search', authenticateToken, [
       return res.status(400).json(responseUtils.error('Validation failed', 'VALIDATION_ERROR'));
     }
 
-    const { q, platform, limit = 20 } = req.query;
+    const { q, platform, limit = 20, nocache } = req.query as any;
 
-    // 尝试使用真实数据，如果失败则回退到模拟数据
-    try {
-      const platformManager = PlatformManager.getInstance();
-      const targetPlatforms = platform ? [platform] : [];
-      const realVideos = await platformManager.searchFromAll(q as string, targetPlatforms, Number(limit));
-      
-      if (realVideos.length > 0) {
-        return res.json(responseUtils.success({
-          videos: realVideos,
-          query: q,
-          total: realVideos.length * 3 // 估算总数
-        }, 'Videos searched successfully with real data'));
-      }
-    } catch (realDataError) {
-      console.warn('Failed to fetch real search data, falling back to mock data:', realDataError);
+    const platformManager = PlatformManager.getInstance();
+    const targetPlatforms = platform ? [platform as string] : ['bilibili'];
+
+    if (platform && !platformManager.getCrawler(platform as string)) {
+      return res.status(400).json(responseUtils.error('Platform not supported', 'PLATFORM_NOT_SUPPORTED'));
+    }
+    
+    // 当q为空时，返回趋势数据作为搜索结果
+    if (!q || (q as string).trim() === '') {
+      const trending = await platformManager.getTrendingFromAll(
+        targetPlatforms,
+        undefined,
+        Number(limit),
+        { nocache: ['1','true'].includes(String(nocache).toLowerCase()) }
+      );
+      return res.json(responseUtils.success({
+        videos: trending,
+        query: '',
+        total: trending.length
+      }, 'Videos searched successfully'));
     }
 
-    // 回退到模拟数据
-    const mockVideos = Array.from({ length: Number(limit) }, (_, i) => {
-      const platforms = platform ? [platform] : ['douyin', 'kuaishou', 'xiaohongshu'];
-      const selectedPlatform = platforms[Math.floor(Math.random() * platforms.length)];
-      const categories = ['entertainment', 'education', 'lifestyle', 'food', 'travel', 'technology', 'fashion'];
-      const selectedCategory = categories[Math.floor(Math.random() * categories.length)];
-      
-      return {
-        id: `search_${Date.now()}_${i}`,
-        platform: selectedPlatform,
-        title: `搜索结果: ${q} - ${getRandomVideoTitle(selectedCategory, selectedPlatform)}`,
-        description: `与搜索词"${q}"相关的${getRandomVideoDescription(selectedCategory, selectedPlatform)}`,
-        author: {
-          id: `search_author_${i}`,
-          name: `搜索创作者${i + 1}`,
-          avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=search${i}`,
-          follower_count: Math.floor(Math.random() * 100000) + 1000,
-          verified: Math.random() > 0.8
-        },
-        thumbnail_url: `https://picsum.photos/320/180?random=search${i + 1}`,
-        video_url: `https://example.com/search_video_${i}.mp4`,
-        duration: Math.floor(Math.random() * 300) + 30,
-        view_count: Math.floor(Math.random() * 50000) + 500,
-        like_count: Math.floor(Math.random() * 5000) + 50,
-        comment_count: Math.floor(Math.random() * 500) + 5,
-        share_count: Math.floor(Math.random() * 200) + 2,
-        created_at: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
-        tags: [q, ...getRandomTags(selectedCategory)],
-        category: selectedCategory,
-        relevance_score: Math.random()
-      };
-    });
-
-    res.json(responseUtils.success({
-      videos: mockVideos.sort((a, b) => b.relevance_score - a.relevance_score),
+    const realVideos = await platformManager.searchFromAll(
+      q as string,
+      targetPlatforms,
+      Number(limit),
+      { nocache: ['1','true'].includes(String(nocache).toLowerCase()) }
+    );
+    return res.json(responseUtils.success({
+      videos: realVideos,
       query: q,
-      total: mockVideos.length
+      total: realVideos.length
     }, 'Videos searched successfully'));
 
   } catch (error) {
@@ -344,63 +277,24 @@ router.get('/trending', authenticateToken, [
       return res.status(400).json(responseUtils.error('Validation failed', 'VALIDATION_ERROR'));
     }
 
-    const { platform, limit = 20 } = req.query;
+    const { platform, limit = 20, nocache } = req.query as any;
 
-    // 尝试使用真实数据，如果失败则回退到模拟数据
-    try {
-      const platformManager = PlatformManager.getInstance();
-      const targetPlatforms = platform ? [platform] : [];
-      const realVideos = await platformManager.getTrendingFromAll(targetPlatforms, undefined, Number(limit));
-      
-      if (realVideos.length > 0) {
-        return res.json(responseUtils.success({
-          videos: realVideos,
-          platform: platform || 'all',
-          total: realVideos.length * 4 // 估算总数
-        }, 'Trending videos retrieved successfully with real data'));
-      }
-    } catch (realDataError) {
-      console.warn('Failed to fetch real trending data, falling back to mock data:', realDataError);
+    const platformManager = PlatformManager.getInstance();
+    const targetPlatforms = platform ? [platform as string] : ['bilibili'];
+
+    if (platform && !platformManager.getCrawler(platform as string)) {
+      return res.status(400).json(responseUtils.error('Platform not supported', 'PLATFORM_NOT_SUPPORTED'));
     }
-
-    // 回退到模拟数据
-    const mockTrendingVideos = Array.from({ length: Number(limit) }, (_, i) => {
-      const platforms = platform ? [platform] : ['douyin', 'kuaishou', 'xiaohongshu'];
-      const selectedPlatform = platforms[Math.floor(Math.random() * platforms.length)];
-      const categories = ['entertainment', 'education', 'lifestyle', 'food', 'travel', 'technology', 'fashion'];
-      const selectedCategory = categories[Math.floor(Math.random() * categories.length)];
-      
-      return {
-        id: `trending_${Date.now()}_${i}`,
-        platform: selectedPlatform,
-        title: `🔥 ${getRandomVideoTitle(selectedCategory, selectedPlatform)}`,
-        description: getRandomVideoDescription(selectedCategory, selectedPlatform),
-        author: {
-          id: `trending_author_${i}`,
-          name: `趋势创作者${i + 1}`,
-          avatar_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=trending${i}`,
-          follower_count: Math.floor(Math.random() * 500000) + 10000,
-          verified: Math.random() > 0.5
-        },
-        thumbnail_url: `https://picsum.photos/320/180?random=trending${i + 1}`,
-        video_url: `https://example.com/trending_${i}.mp4`,
-        duration: Math.floor(Math.random() * 200) + 60,
-        view_count: Math.floor(Math.random() * 1000000) + 10000,
-        like_count: Math.floor(Math.random() * 50000) + 1000,
-        comment_count: Math.floor(Math.random() * 5000) + 100,
-        share_count: Math.floor(Math.random() * 2000) + 50,
-        created_at: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000).toISOString(),
-        tags: ['趋势', '热门', '爆款', 'viral', ...getRandomTags(selectedCategory)],
-        category: selectedCategory,
-        trend_score: Math.random() * 100,
-        growth_rate: Math.random() * 500
-      };
-    });
-
-    res.json(responseUtils.success({
-      videos: mockTrendingVideos.sort((a, b) => b.trend_score - a.trend_score),
-      platform: platform || 'all',
-      total: mockTrendingVideos.length
+    const realVideos = await platformManager.getTrendingFromAll(
+      targetPlatforms,
+      undefined,
+      Number(limit),
+      { nocache: ['1','true'].includes(String(nocache).toLowerCase()) }
+    );
+    return res.json(responseUtils.success({
+      videos: realVideos,
+      platform: platform || 'bilibili',
+      total: realVideos.length
     }, 'Trending videos retrieved successfully'));
 
   } catch (error) {
@@ -413,7 +307,7 @@ router.get('/trending', authenticateToken, [
 router.post('/download', authenticateToken, async (req, res) => {
   try {
     const { url, options = {} } = req.body;
-    const userId = req.user.id;
+    const userId = req.user.userId;
 
     if (!url) {
       return res.status(400).json(responseUtils.error('Video URL is required', 'MISSING_URL'));
@@ -492,7 +386,7 @@ router.post('/download', authenticateToken, async (req, res) => {
 router.post('/:id/process', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const processingConfig = req.body;
 
     // 获取视频信息
@@ -578,7 +472,7 @@ router.post('/:id/process', authenticateToken, async (req, res) => {
 // 上传视频
 router.post('/upload', authenticateToken, upload.single('video'), async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const { title, description, tags } = req.body;
 
     if (!req.file) {
@@ -740,6 +634,19 @@ router.get('/:id/url', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Get video URL error:', error);
     res.status(500).json(responseUtils.error('Failed to get video URL', 'URL_ERROR'));
+  }
+});
+
+// 清理视频发现缓存
+router.delete('/cache', authenticateToken, async (req, res) => {
+  try {
+    const platformManager = PlatformManager.getInstance();
+    platformManager.clearCache();
+    res.set('Cache-Control', 'no-store');
+    return res.json(responseUtils.success({ cleared: true }, 'Video discovery cache cleared'));
+  } catch (error) {
+    console.error('Clear video cache error:', error);
+    return res.status(500).json(responseUtils.error('Failed to clear video cache', 'CACHE_CLEAR_FAILED'));
   }
 });
 

@@ -14,7 +14,8 @@ import {
   Empty,
   message,
   Modal,
-  Form
+  Form,
+  Dropdown
 } from 'antd';
 import { 
   Search, 
@@ -30,6 +31,7 @@ import {
 } from 'lucide-react';
 import { videoAPI, taskAPI } from '../services/api';
 import { useAuth } from '../store';
+import TaskProgressTracker from '../components/TaskProgressTracker';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 
@@ -61,6 +63,8 @@ interface Video {
   created_at: string;
   tags: string[];
   category: string;
+  relevanceScore?: number;
+  is_real_data?: boolean;
 }
 
 interface Account {
@@ -74,13 +78,14 @@ interface Account {
   verified: boolean;
   category: string;
   bio: string;
+  top_id?: number;
 }
 
 export const VideoDiscovery: React.FC = () => {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPlatform, setSelectedPlatform] = useState<string>('all');
+  const [selectedPlatform, setSelectedPlatform] = useState<string>('bilibili');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [minViews, setMinViews] = useState<number>(0);
   const [maxDuration, setMaxDuration] = useState<number>(0);
@@ -91,11 +96,14 @@ export const VideoDiscovery: React.FC = () => {
   const [activeTab, setActiveTab] = useState('videos');
   const [downloadModalVisible, setDownloadModalVisible] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [createdTask, setCreatedTask] = useState<any>(null);
   const [downloadForm] = Form.useForm();
   const [advancedFiltersVisible, setAdvancedFiltersVisible] = useState(false);
+  const proxify = (u: string) => `/api/proxy/image?url=${encodeURIComponent(u || '')}`;
 
   const platforms = [
     { value: 'all', label: '全部平台' },
+    { value: 'bilibili', label: '哔哩哔哩' },
     { value: 'douyin', label: '抖音' },
     { value: 'kuaishou', label: '快手' },
     { value: 'xiaohongshu', label: '小红书' },
@@ -110,21 +118,48 @@ export const VideoDiscovery: React.FC = () => {
     { value: 'travel', label: '旅行' },
     { value: 'technology', label: '科技' },
     { value: 'fashion', label: '时尚' },
-  ];
+];
+
+  useEffect(() => {
+    let timer: any;
+    const poll = async () => {
+      if (!createdTask?.id) return;
+      try {
+        const resp = await taskAPI.getTask(createdTask.id);
+        const data = resp?.data || resp;
+        if (data) setCreatedTask(data);
+      } catch {}
+    };
+    if (downloadModalVisible && createdTask?.id) {
+      timer = setInterval(poll, 3000);
+    }
+    return () => { if (timer) clearInterval(timer); };
+  }, [downloadModalVisible, createdTask?.id]);
 
   useEffect(() => {
     fetchTrendingVideos();
     fetchTopAccounts();
-  }, []);
+  }, [selectedPlatform]);
 
   const fetchTrendingVideos = async () => {
     try {
       setLoading(true);
-      const response = await videoAPI.getTrendingVideos(selectedPlatform === 'all' ? undefined : selectedPlatform, 20);
+      if (selectedPlatform === 'all') {
+        setTrendingVideos([]);
+        message.info('请先选择具体平台以获取热门视频');
+        return;
+      }
+      const response = await videoAPI.getTrendingVideos(selectedPlatform, 20);
       if (response.success) {
         setTrendingVideos(response.data.videos || []);
       }
-    } catch (error) {
+    } catch (error: any) {
+      const code = error?.response?.data?.error?.code;
+      if (code === 'PLATFORM_NOT_SUPPORTED') {
+        message.warning('该平台暂不支持热门视频真实数据');
+        setTrendingVideos([]);
+        return;
+      }
       console.error('Failed to fetch trending videos:', error);
       message.error('获取热门视频失败');
     } finally {
@@ -134,17 +169,24 @@ export const VideoDiscovery: React.FC = () => {
 
   const fetchTopAccounts = async () => {
     try {
-      const response = await videoAPI.discoverVideos({ 
-        platform: selectedPlatform === 'all' ? undefined : selectedPlatform,
-        limit: 12 
-      });
-      if (response.success) {
-        // 从视频中提取作者信息作为热门账号
-        const authors = response.data.videos?.map((video: Video) => video.author) || [];
-        const uniqueAuthors = authors.filter((author, index, self) => 
-          index === self.findIndex(a => a.id === author.id)
-        );
-        setTopAccounts(uniqueAuthors);
+      const params: any = selectedPlatform !== 'all' ? { platform: selectedPlatform } : {};
+      const res = await (await import('../services/topCreatorsService')).default.getTopCreators(params);
+      if (res.success) {
+        const rows = res.data || [];
+        const accounts: Account[] = rows.map((u: any) => ({
+          id: u.creator_user_id?.toString(),
+          platform: u.platform,
+          username: u.creator_username,
+          display_name: u.creator_display_name || u.creator_username,
+          avatar_url: u.avatar_url || '',
+          follower_count: u.follower_count || 0,
+          video_count: 0,
+          verified: !!u.verified,
+          category: u.category || 'entertainment',
+          bio: u.bio || '',
+          top_id: u.id,
+        }));
+        setTopAccounts(accounts);
       }
     } catch (error) {
       console.error('Failed to fetch top accounts:', error);
@@ -192,7 +234,13 @@ export const VideoDiscovery: React.FC = () => {
         
         setVideos(resultVideos);
       }
-    } catch (error) {
+    } catch (error: any) {
+      const code = error?.response?.data?.error?.code;
+      if (code === 'PLATFORM_NOT_SUPPORTED') {
+        message.warning('该平台暂不支持搜索真实数据');
+        setVideos([]);
+        return;
+      }
       console.error('Search failed:', error);
       message.error('搜索失败');
     } finally {
@@ -201,6 +249,10 @@ export const VideoDiscovery: React.FC = () => {
   };
 
   const handleDownload = (video: Video) => {
+    if (!isAuthenticated) {
+      message.warning('请先登录后再创建下载任务');
+      return;
+    }
     setSelectedVideo(video);
     setDownloadModalVisible(true);
   };
@@ -213,27 +265,24 @@ export const VideoDiscovery: React.FC = () => {
         task_type: 'download' as const,
         source_config: {
           platform: selectedVideo.platform,
-          video_id: selectedVideo.id,
-          video_url: selectedVideo.video_url,
-          title: selectedVideo.title,
-          download_quality: values.quality || 'high',
-          extract_audio: values.extractAudio || false,
+          videoId: selectedVideo.id,
+          url: selectedVideo.video_url,
+          quality: values.quality || 'high',
+          extractAudio: values.extractAudio || false,
         },
         target_config: {
-          save_path: values.savePath || './downloads',
-          rename_pattern: values.renamePattern || '{title}_{id}',
-        },
-        processing_config: {
-          auto_process: values.autoProcess || false,
-          processing_type: values.processingType || 'none',
+          outputPath: values.savePath || './downloads',
+          renamePattern: values.renamePattern || '{title}_{id}',
+          autoProcess: values.autoProcess || false,
+          processingConfig: { processingType: values.processingType || 'none' }
         }
       };
 
       const response = await taskAPI.createTask(taskData);
       if (response.success) {
         message.success('下载任务创建成功');
-        setDownloadModalVisible(false);
-        downloadForm.resetFields();
+        setCreatedTask(response.data);
+        // 保持模态框打开，展示进度
       }
     } catch (error) {
       console.error('Failed to create download task:', error);
@@ -262,39 +311,29 @@ export const VideoDiscovery: React.FC = () => {
       
       // 创建自定义模态框，包含关闭按钮
       const modal = Modal.info({
-        title: (
-          <div className="flex items-center justify-between">
-            <span className="truncate flex-1">{video.title}</span>
-            <button
-              className="ml-4 text-gray-400 hover:text-gray-600 transition-colors"
-              onClick={() => {
-                modal.destroy();
-                setIsPlaying(false);
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        ),
+        title: (<div className="truncate">{video.title}</div>),
         width: 800,
         content: (
           <div className="text-center">
-            <video 
-              src={video.video_url} 
-              controls 
-              autoPlay 
-              className="w-full max-h-96 rounded-lg"
-              onEnded={() => {
-                setIsPlaying(false);
-              }}
-              onLoadStart={(e) => {
-                // 如果视频加载失败，显示提示信息
-                const target = e.target as HTMLVideoElement;
-                target.onerror = () => {
-                  message.warning('视频加载失败，可能是不支持的视频格式或链接无效');
-                };
-              }}
-            />
+            {video.platform === 'bilibili' ? (
+              (() => {
+                const match = video.video_url.match(/\/video\/(BV[\w]+)/);
+                const bvid = match ? match[1] : '';
+                const src = bvid ? `https://player.bilibili.com/player.html?bvid=${bvid}&autoplay=1` : video.video_url;
+                return (
+                  <iframe
+                    src={src}
+                    allow="autoplay"
+                    className="w-full max-h-96 rounded-lg"
+                    style={{ height: 400, border: 0 }}
+                  />
+                );
+              })()
+            ) : (
+              <div>
+                <a href={video.video_url} target="_blank" rel="noreferrer">打开原始链接</a>
+              </div>
+            )}
             <div className="mt-4 text-left bg-gray-50 p-4 rounded-lg">
               <p className="text-gray-700 mb-3">{video.description}</p>
               <div className="flex items-center justify-between text-sm text-gray-500">
@@ -311,9 +350,10 @@ export const VideoDiscovery: React.FC = () => {
                 <span>{dayjs(video.created_at).fromNow()}</span>
               </div>
               <div className="mt-2 flex items-center space-x-2">
-                <Avatar src={video.author.avatar_url} size="small" />
+                <Avatar src={proxify(video.author.avatar_url)} size="small" />
                 <span className="text-sm text-gray-600">{video.author.name}</span>
                 <Tag color="blue">{platforms.find(p => p.value === video.platform)?.label}</Tag>
+                {((video as any).is_real_data || (video as any).is_real) && <Tag color="green">真实</Tag>}
               </div>
             </div>
           </div>
@@ -338,7 +378,7 @@ export const VideoDiscovery: React.FC = () => {
           <div className="relative group">
             <img
               alt={video.title}
-              src={video.thumbnail_url}
+              src={proxify(video.thumbnail_url)}
               className="w-full h-48 object-cover transition-transform group-hover:scale-105"
             />
             <div className="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded">
@@ -377,7 +417,7 @@ export const VideoDiscovery: React.FC = () => {
         ]}
       >
         <Card.Meta
-          avatar={<Avatar src={video.author.avatar_url} />}
+          avatar={null}
           title={
             <div className="truncate" title={video.title}>
               {video.title}
@@ -385,29 +425,66 @@ export const VideoDiscovery: React.FC = () => {
           }
           description={
             <div className="space-y-2">
-              <div className="text-sm text-gray-600 truncate" title={video.description}>
+              <div className="text-sm text-gray-700 line-clamp-2" title={video.description}>
                 {video.description}
               </div>
               <div className="flex items-center justify-between text-xs text-gray-500">
-                <Space>
-                  <Eye className="w-3 h-3" />
-                  {formatNumber(video.view_count)}
-                  <Heart className="w-3 h-3" />
-                  {formatNumber(video.like_count)}
-                  <Share className="w-3 h-3" />
-                  {formatNumber(video.share_count)}
-                </Space>
-                <span>{dayjs(video.created_at).fromNow()}</span>
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1">
+                    <Eye className="w-3 h-3" />
+                    {formatNumber(video.view_count)}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Heart className="w-3 h-3" />
+                    {formatNumber(video.like_count)}
+                  </span>
+                </div>
+                <span className="whitespace-nowrap">{dayjs(video.created_at).fromNow()}</span>
               </div>
-              <div className="text-xs text-gray-500">
-                <User className="w-3 h-3 inline mr-1" />
-                {video.author.name}
-                {video.author.verified && <span className="ml-1 text-blue-500">✓</span>}
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {video.tags.slice(0, 3).map((tag, index) => (
-                  <Tag key={index} className="text-xs">{tag}</Tag>
-                ))}
+              <div className="flex items-center justify-between">
+                <Dropdown
+                  trigger={["click","contextMenu"]}
+                  menu={{
+                    items: [
+                      { key: 'add', label: '加入优质账号' },
+                      { key: 'view', label: '查看UP主页' },
+                    ],
+                    onClick: async ({ key }) => {
+                      try {
+                        if (key === 'add') {
+                          const topCreatorsService = (await import('../services/topCreatorsService')).default;
+                          await topCreatorsService.addTopCreator({
+                            platform: video.platform,
+                            creator_user_id: String(video.author.id || ''),
+                            creator_username: video.author.name,
+                            creator_display_name: video.author.name,
+                            avatar_url: video.author.avatar_url,
+                            follower_count: 0,
+                            verified: false,
+                            bio: '',
+                            category: video.category || 'discovery',
+                            score: video.relevanceScore || 0,
+                          });
+                          message.success('已将该UP主加入优质账号');
+                          fetchTopAccounts();
+                        } else if (key === 'view') {
+                          if (video.platform === 'bilibili' && video.author.id) {
+                            window.open(`https://space.bilibili.com/${video.author.id}`, '_blank');
+                          }
+                        }
+                      } catch (e: any) {
+                        message.error((e?.response?.data?.error?.details) || '操作失败，可能未登录或此账号已存在');
+                      }
+                    }
+                  }}
+                >
+                  <div className="flex items-center gap-2 text-xs text-gray-600" style={{ cursor: 'pointer' }}>
+                    <Avatar src={proxify(video.author.avatar_url)} size={20} />
+                    <span className="truncate max-w-[140px]">{video.author.name}</span>
+                    {video.author.verified && <span className="text-blue-500">✓</span>}
+                  </div>
+                </Dropdown>
+                <Tag color="blue" className="text-xs">{platforms.find(p => p.value === video.platform)?.label}</Tag>
               </div>
             </div>
           }
@@ -418,6 +495,22 @@ export const VideoDiscovery: React.FC = () => {
 
   const AccountCard = ({ account }: { account: Account }) => {
     const [following, setFollowing] = useState(false);
+    const handleAddToTop = async () => {
+      try {
+        const monitoringService = (await import('../services/monitoringService')).default;
+        await monitoringService.addMonitoringUser({
+          platform: account.platform || selectedPlatform,
+          target_user_id: account.id,
+          target_username: account.username,
+          category: account.category,
+          check_frequency_minutes: 60
+        });
+        message.success('已添加到优质账号');
+        fetchTopAccounts();
+      } catch (e) {
+        message.error('添加失败');
+      }
+    };
     
     const handleFollow = () => {
       setFollowing(!following);
@@ -425,33 +518,56 @@ export const VideoDiscovery: React.FC = () => {
     };
     
     return (
-      <Card hoverable>
-        <div className="text-center">
-          <Avatar size={64} src={account.avatar_url} />
-          <div className="mt-2">
-            <div className="font-semibold truncate">{account.display_name}</div>
-            <div className="text-sm text-gray-500 truncate">@{account.username}</div>
-          </div>
-          <div className="mt-2 text-xs text-gray-600">
-            <div>{formatNumber(account.follower_count)} 粉丝</div>
-            <div>{account.video_count} 作品</div>
-          </div>
-          {account.bio && (
-            <div className="mt-2 text-xs text-gray-600 line-clamp-2">
-              {account.bio}
+      <Card hoverable bodyStyle={{ minHeight: 160 }}>
+        <div>
+          <div className="flex items-start gap-3">
+            <div style={{ width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flex: '0 0 64px' }}>
+              <img src={proxify(account.avatar_url)} alt={account.display_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
-          )}
-          <div className="mt-2">
-            <Tag color="blue" className="mb-1">
-              {categories.find(c => c.value === account.category)?.label || account.category}
-            </Tag>
-            {account.verified && <Tag color="green">认证</Tag>}
-          </div>
-          <div className="mt-3 space-y-2">
-            <Button size="small" block onClick={handleFollow} type={following ? 'default' : 'primary'}>
-              {following ? '已关注' : '关注'}
-            </Button>
-            <Button size="small" block>查看详情</Button>
+            <div className="flex-1">
+              <div className="font-semibold truncate text-base">{account.display_name}</div>
+              <div className="text-xs text-gray-500 truncate">@{account.username}</div>
+              <div className="mt-2 flex items-center gap-3 text-xs text-gray-600">
+                <span>粉丝 {formatNumber(account.follower_count)}</span>
+                <span>作品 {account.video_count}</span>
+                {account.verified && <Tag color="green" className="text-xxs">认证</Tag>}
+              </div>
+              {account.bio && (
+                <div className="mt-2 text-xs text-gray-600 line-clamp-2">{account.bio}</div>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Tag color="blue" className="text-xs">
+                  {platforms.find(p => p.value === account.platform)?.label || account.platform}
+                </Tag>
+                <Tag color="blue" className="text-xs">
+                  {categories.find(c => c.value === account.category)?.label || account.category}
+                </Tag>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="small" onClick={() => {
+                  if (account.platform === 'bilibili' && account.id) {
+                    window.open(`https://space.bilibili.com/${account.id}`, '_blank');
+                  }
+                }}>主页</Button>
+                {account.top_id ? (
+                  <Button size="small" danger onClick={async () => {
+                    try {
+                      const svc = (await import('../services/topCreatorsService')).default;
+                      await svc.deleteTopCreator(account.top_id!);
+                      message.success('已移出优质账号');
+                      fetchTopAccounts();
+                    } catch (e) {
+                      message.error('移出失败');
+                    }
+                  }}>移出</Button>
+                ) : (
+                  <Button size="small" type="primary" onClick={handleAddToTop}>加入</Button>
+                )}
+                <Button size="small" onClick={handleFollow} type={following ? 'default' : 'dashed'}>
+                  {following ? '已关注' : '关注'}
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       </Card>
@@ -589,7 +705,7 @@ export const VideoDiscovery: React.FC = () => {
                 ))}
               </Row>
             ) : (
-              <Empty description="暂无热门视频" />
+              <Empty description={selectedPlatform === 'all' ? '请选择具体平台以获取热门视频' : '暂无热门视频'} />
             )}
           </Spin>
         </TabPane>
@@ -603,6 +719,10 @@ export const VideoDiscovery: React.FC = () => {
           } 
           key="accounts"
         >
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm text-gray-600">共 {topAccounts.length} 个优质账号</div>
+            <Button size="small" onClick={fetchTopAccounts}>刷新</Button>
+          </div>
           <Row gutter={[16, 16]}>
             {topAccounts.map(account => (
               <Col key={account.id} xs={24} sm={12} md={8} lg={6}>
@@ -640,12 +760,24 @@ export const VideoDiscovery: React.FC = () => {
       {/* 下载模态框 */}
       <Modal
         title="创建下载任务"
-        visible={downloadModalVisible}
+        open={downloadModalVisible}
         onCancel={() => setDownloadModalVisible(false)}
         footer={null}
         width={600}
       >
-        {selectedVideo && (
+        {createdTask ? (
+          <TaskProgressTracker 
+            task={createdTask}
+            onRefresh={async () => {
+              try {
+                const resp = await taskAPI.getTask(createdTask.id);
+                const data = resp?.data || resp;
+                if (data) setCreatedTask(data);
+              } catch {}
+            }}
+            autoRefresh={false}
+          />
+        ) : selectedVideo && (
           <Form
             form={downloadForm}
             layout="vertical"
@@ -661,7 +793,7 @@ export const VideoDiscovery: React.FC = () => {
           >
             <div className="mb-4 p-3 bg-gray-50 rounded">
               <div className="flex items-center space-x-3">
-                <img src={selectedVideo.thumbnail_url} alt={selectedVideo.title} className="w-16 h-16 object-cover rounded" />
+                <img src={proxify(selectedVideo.thumbnail_url)} alt={selectedVideo.title} className="w-16 h-16 object-cover rounded" />
                 <div>
                   <div className="font-medium truncate">{selectedVideo.title}</div>
                   <div className="text-sm text-gray-500">{selectedVideo.author.name}</div>

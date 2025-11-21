@@ -19,7 +19,7 @@ router.get('/', authenticateToken, async (req, res) => {
     // 如果没有设置，返回默认设置
     const defaultSettings = {
       general: {
-        siteName: '短视频搬运工具',
+        siteName: 'media-tool',
         siteDescription: '专业的短视频内容管理和发布平台',
         language: 'zh-CN',
         timezone: 'Asia/Shanghai',

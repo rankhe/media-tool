@@ -58,29 +58,52 @@ export class BilibiliCrawlerService {
    */
   async getTrendingVideos(category: string = 'all', limit: number = 20): Promise<any[]> {
     try {
-      logger.info(`[Bilibili] 获取热门视频，分类: ${category}, 数量: ${limit}`);
-      
-      // 由于B站排行榜API需要复杂认证，我们使用搜索热门关键词的方式获取真实数据
-      const trendingKeywords = {
-        'entertainment': ['搞笑', '娱乐', '综艺', '音乐'],
-        'education': ['知识', '科普', '教程', '学习'],
-        'lifestyle': ['生活', '日常', 'vlog', '分享'],
-        'food': ['美食', '料理', '烹饪', '吃播'],
-        'travel': ['旅行', '旅游', '攻略', '风景'],
-        'technology': ['科技', '数码', '评测', '产品'],
-        'fashion': ['时尚', '穿搭', '美妆', '潮流'],
-        'all': ['热门', '推荐', '爆款', 'viral']
-      };
-      
-      const keywords = trendingKeywords[category as keyof typeof trendingKeywords] || trendingKeywords['all'];
-      const randomKeyword = keywords[Math.floor(Math.random() * keywords.length)];
-      
-      // 使用搜索API获取真实数据
-      return await this.searchVideos(randomKeyword, 1, limit);
-      
+      logger.info(`[Bilibili] 获取首页热门视频，数量: ${limit}`);
+      const url = `${this.BASE_URL}/x/web-interface/popular?ps=${limit}&pn=1`;
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': this.USER_AGENT,
+          'Referer': 'https://www.bilibili.com/',
+          'Accept': 'application/json, text/plain, */*',
+        }
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+      if (data.code !== 0 || !data.data || !Array.isArray(data.data.list)) {
+        throw new Error(`Bilibili popular API error: ${data.message || 'unknown'}`);
+      }
+      const list = data.data.list;
+      const videos = list.map((video: any) => ({
+        id: (video.aid || video.cid || video.id)?.toString(),
+        platform: 'bilibili',
+        title: this.cleanTitle(video.title || ''),
+        description: video.desc || '',
+        thumbnail_url: video.pic,
+        video_url: `https://www.bilibili.com/video/${video.bvid}`,
+        duration: video.duration || 0,
+        view_count: (video.stat?.view ?? video.view ?? 0),
+        like_count: (video.stat?.like ?? video.like ?? 0),
+        comment_count: (video.stat?.reply ?? video.reply ?? 0),
+        share_count: (video.stat?.share ?? video.share ?? 0),
+        created_at: new Date((video.pubdate || video.pub_time || Date.now()) * 1000).toISOString(),
+        author: {
+          id: (video.owner?.mid ?? video.mid ?? 0).toString(),
+          name: video.owner?.name ?? video.uname ?? '',
+          avatar_url: video.owner?.face ?? '',
+          follower_count: 0,
+          verified: false
+        },
+        tags: video.tag ? String(video.tag).split(',') : [],
+        category: this.mapCategory(video.tname || ''),
+        relevanceScore: this.calculateTrendScore((video.stat?.view ?? 0), (video.stat?.like ?? 0), (video.stat?.reply ?? 0)),
+        crawled_at: new Date().toISOString(),
+        is_real_data: true
+      }));
+      logger.info(`[Bilibili] 成功获取首页热门视频 ${videos.length} 个`);
+      return videos;
     } catch (error) {
-      logger.error('[Bilibili] 获取热门视频失败，使用模拟数据:', error);
-      return this.generateMockTrendingVideos(category, limit);
+      logger.error('[Bilibili] 获取首页热门视频失败:', error);
+      return [];
     }
   }
 
@@ -121,14 +144,14 @@ export class BilibiliCrawlerService {
       
       // B站API错误码处理
       if (data.code !== 0) {
-        logger.warn(`[Bilibili] 搜索API返回错误码: ${data.code}, 消息: ${data.message}, 使用模拟数据`);
-        return this.generateMockSearchVideos(keyword, page, limit);
+        logger.warn(`[Bilibili] 搜索API返回错误码: ${data.code}, 消息: ${data.message}`);
+        return [];
       }
 
       // 确保有搜索结果
       if (!data.data || !data.data.result || data.data.result.length === 0) {
-        logger.warn(`[Bilibili] 搜索无结果，使用模拟数据`);
-        return this.generateMockSearchVideos(keyword, page, limit);
+        logger.warn(`[Bilibili] 搜索无结果`);
+        return [];
       }
 
       // 格式化搜索结果
@@ -154,7 +177,7 @@ export class BilibiliCrawlerService {
         },
         tags: video.tag ? video.tag.split(',') : [],
         category: this.mapCategory(video.tname),
-        relevance_score: this.calculateRelevanceScore(video, keyword),
+        relevanceScore: this.calculateRelevanceScore(video, keyword),
         crawled_at: new Date().toISOString(),
         is_real_data: true
       }));
@@ -163,8 +186,8 @@ export class BilibiliCrawlerService {
       return videos;
       
     } catch (error) {
-      logger.error('[Bilibili] 搜索视频失败，使用模拟数据:', error);
-      return this.generateMockSearchVideos(keyword, page, limit);
+      logger.error('[Bilibili] 搜索视频失败:', error);
+      return [];
     }
   }
 

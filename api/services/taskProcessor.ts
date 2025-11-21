@@ -94,7 +94,10 @@ export class TaskProcessor {
    * 处理下载任务
    */
   private async handleDownloadTask(job: Job) {
-    const { taskId, sourceConfig, targetConfig } = job.data;
+    const data = job.data || {};
+    const taskId: string = data.taskId || data.task_id;
+    const sourceConfig = data.sourceConfig || data.source_config || {};
+    const targetConfig = data.targetConfig || data.target_config || {};
     
     try {
       // 更新任务状态为运行中
@@ -103,44 +106,61 @@ export class TaskProcessor {
       // 验证yt-dlp是否可用
       const isYtDlpAvailable = await this.downloadService.checkYtDlp();
       if (!isYtDlpAvailable) {
-        throw new Error('yt-dlp is not available. Please install yt-dlp first.');
+        throw new Error('yt-dlp 未检测到。请安装后重试：1) python -m pip install yt-dlp，或 2) 下载 yt-dlp.exe 并将路径设置到环境变量 YTDLP_PATH，或 3) 安装 youtube-dl。');
       }
 
-      // 构建视频URL
-      let videoUrl = '';
-      switch (sourceConfig.platform) {
-        case 'douyin':
-          videoUrl = `https://www.douyin.com/video/${sourceConfig.videoId}`;
-          break;
-        case 'kuaishou':
-          videoUrl = `https://www.kuaishou.com/short-video/${sourceConfig.videoId}`;
-          break;
-        case 'xiaohongshu':
-          videoUrl = `https://www.xiaohongshu.com/discovery/item/${sourceConfig.videoId}`;
-          break;
-        case 'bilibili':
-          videoUrl = `https://www.bilibili.com/video/${sourceConfig.videoId}`;
-          break;
-        case 'wechat':
-          videoUrl = sourceConfig.videoId; // 微信视频号可能需要特殊处理
-          break;
-        default:
-          videoUrl = sourceConfig.videoId; // 直接作为URL
+      // 构建视频URL（优先使用源URL）
+      let videoUrl = sourceConfig.url || '';
+      if (!videoUrl) {
+        switch (sourceConfig.platform) {
+          case 'douyin':
+            videoUrl = `https://www.douyin.com/video/${sourceConfig.videoId}`;
+            break;
+          case 'kuaishou':
+            videoUrl = `https://www.kuaishou.com/short-video/${sourceConfig.videoId}`;
+            break;
+          case 'xiaohongshu':
+            videoUrl = `https://www.xiaohongshu.com/discovery/item/${sourceConfig.videoId}`;
+            break;
+          case 'bilibili':
+            videoUrl = `https://www.bilibili.com/video/${sourceConfig.videoId}`;
+            break;
+          case 'wechat':
+            videoUrl = sourceConfig.videoId;
+            break;
+          default:
+            videoUrl = sourceConfig.videoId;
+        }
       }
 
-      // 验证URL
-      const isValidUrl = await this.downloadService.validateUrl(videoUrl);
-      if (!isValidUrl) {
-        throw new Error(`Invalid video URL: ${videoUrl}`);
+      // 清理URL中可能的反引号或包裹引号
+      videoUrl = String(videoUrl || '').trim().replace(/`/g, '').replace(/^['"]|['"]$/g, '');
+
+      if (!videoUrl) {
+        throw new Error('Missing video URL or ID in task source_config');
+      }
+
+      // 轻量校验（仅格式），不阻断下载流程；若缺少协议则尝试补全
+      if (!/^https?:\/\//.test(videoUrl)) {
+        if (videoUrl.startsWith('www.')) {
+          videoUrl = `https://${videoUrl}`;
+        } else {
+          // 继续由下载器处理具体错误
+        }
       }
 
       // 获取视频信息
-      const videoInfo = await this.downloadService.getVideoInfo(videoUrl);
-      console.log(`📹 Video info:`, {
-        title: videoInfo.title,
-        duration: videoInfo.duration,
-        uploader: videoInfo.uploader
-      });
+      let videoInfo: any = null;
+      try {
+        videoInfo = await this.downloadService.getVideoInfo(videoUrl);
+        console.log(`📹 Video info:`, {
+          title: videoInfo.title,
+          duration: videoInfo.duration,
+          uploader: videoInfo.uploader
+        });
+      } catch (e) {
+        console.warn('⚠️  Failed to prefetch video info, will continue to download:', e instanceof Error ? e.message : e);
+      }
 
       // 执行下载
       let lastProgress = 0;
@@ -151,14 +171,17 @@ export class TaskProcessor {
           quality: sourceConfig.quality || 'high',
           extractAudio: sourceConfig.extractAudio || false,
           renamePattern: targetConfig.renamePattern || '{title}_{id}',
-          createFolder: targetConfig.createFolder !== false
+          createFolder: targetConfig.createFolder !== false,
+          platform: sourceConfig.platform
         },
         (progress: DownloadProgress) => {
           // 更新进度
           const progressPercent = progress.percent / 100;
           if (progressPercent !== lastProgress) {
             lastProgress = progressPercent;
-            job.progress(progressPercent);
+            if (job && typeof (job as any).progress === 'function') {
+              (job as any).progress(progressPercent);
+            }
             
             // 更新数据库中的任务进度
             DatabaseService.updateTaskStatus(taskId, 'running', progressPercent)

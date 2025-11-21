@@ -9,13 +9,15 @@ import {
   Send, 
   Settings,
   BarChart3,
-  Monitor
+  Monitor,
+  MessageCircle
 } from 'lucide-react';
 
 const menuItems = [
   { path: '/dashboard', icon: Home, label: '仪表盘' },
   { path: '/accounts', icon: User, label: '账号管理' },
   { path: '/discover', icon: Search, label: '视频发现' },
+  { path: '/wechat', icon: MessageCircle, label: '公众号热点' },
   { path: '/tasks', icon: Video, label: '任务管理' },
   { path: '/editor', icon: Edit3, label: '视频编辑' },
   { path: '/publish', icon: Send, label: '发布管理' },

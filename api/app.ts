@@ -28,6 +28,11 @@ import analyticsRoutes from './routes/analytics.js'
 import migrateRoutes from './routes/migrate.js'
 import monitoringRoutes from './routes/monitoring.js'
 import monitoringAdminRoutes from './routes/monitoring-admin.js'
+import zhihuRoutes from './routes/zhihu.js'
+import proxyRoutes from './routes/proxy.js'
+import topCreatorsRoutes from './routes/top-creators.js'
+import wechatPublicRoutes from './routes/wechat-public.js'
+import wechatRoutes from './routes/wechat.js'
 
 // for esm mode
 const __filename = fileURLToPath(import.meta.url)
@@ -42,6 +47,8 @@ try {
 }
 
 const app: express.Application = express()
+// 禁用 ETag，避免 304 对 API 代理造成影响
+app.set('etag', false)
 
 // 安全中间件
 app.use(helmet({
@@ -89,6 +96,20 @@ const monitoringLimiter = rateLimit({
   }
 })
 
+// 微信公开接口限流 - 更严格
+const wechatPublicLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 30,
+  message: {
+    success: false,
+    error: {
+      message: 'Too many requests for wechat public API, please try again later.',
+      code: 'RATE_LIMIT_EXCEEDED',
+      statusCode: 429
+    }
+  }
+})
+
 // CORS配置 - 必须在限流之前
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
@@ -101,6 +122,7 @@ app.use(cors({
 
 app.use(generalLimiter)
 app.use('/api/monitoring', monitoringLimiter)
+app.use('/api/wechat-public', wechatPublicLimiter)
 
 // 请求体解析
 app.use(express.json({ limit: '50mb' }))
@@ -128,6 +150,11 @@ app.use('/api/settings', settingsRoutes)
 app.use('/api/analytics', analyticsRoutes)
 app.use('/api/monitoring', monitoringRoutes)
 app.use('/api/monitoring-admin', monitoringAdminRoutes)
+app.use('/api/zhihu', zhihuRoutes)
+app.use('/api/proxy', proxyRoutes)
+app.use('/api/top-creators', topCreatorsRoutes)
+app.use('/api/wechat-public', wechatPublicRoutes)
+app.use('/api/wechat', wechatRoutes)
 app.use('/', migrateRoutes)
 
 // 全局错误处理

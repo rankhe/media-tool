@@ -5,6 +5,7 @@ import { PostgreSQLService } from '../src/services/postgresqlService.js';
 // 创建Supabase客户端
 let supabase: any = null;
 let usePostgreSQL = false;
+const mockTasks = new Map<string, any>();
 
 // 检查是否配置了 PostgreSQL
 if (process.env.POSTGRES_HOST && process.env.POSTGRES_DB) {
@@ -265,21 +266,8 @@ export class DatabaseService {
   // 任务相关操作
   static async getUserTasks(userId: string, limit = 50) {
     if (!supabase) {
-      return { 
-        data: [
-          {
-            id: '1',
-            user_id: userId,
-            task_type: 'download',
-            status: 'completed',
-            source_config: { url: 'https://example.com/video1.mp4' },
-            progress: 100,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }
-        ], 
-        error: null 
-      };
+      const all = Array.from(mockTasks.values()).filter(t => t.user_id === userId).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return { data: all.slice(0, limit), error: null };
     }
     
     const { data, error } = await supabase
@@ -294,7 +282,9 @@ export class DatabaseService {
 
   static async getUserTasksToday(userId: string, today: string) {
     if (!supabase) {
-      return { data: [], error: null };
+      const since = new Date(today).getTime();
+      const data = Array.from(mockTasks.values()).filter(t => t.user_id === userId && new Date(t.created_at).getTime() >= since);
+      return { data, error: null };
     }
     
     const { data, error } = await supabase
@@ -309,19 +299,8 @@ export class DatabaseService {
 
   static async getTaskById(id: string) {
     if (!supabase) {
-      return { 
-        data: { 
-          id, 
-          user_id: '1',
-          task_type: 'download',
-          status: 'completed',
-          source_config: { url: 'https://example.com/video1.mp4' },
-          progress: 100,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }, 
-        error: null 
-      };
+      const data = mockTasks.get(id) || null;
+      return { data, error: null };
     }
     
     const { data, error } = await supabase
@@ -335,17 +314,17 @@ export class DatabaseService {
 
   static async createTask(taskData: any) {
     if (!supabase) {
-      return { 
-        data: { 
-          ...taskData, 
-          id: Math.random().toString(36).substr(2, 9),
-          status: 'pending',
-          progress: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }, 
-        error: null 
+      const id = Math.random().toString(36).substr(2, 9);
+      const record = {
+        ...taskData,
+        id,
+        status: taskData.status || 'pending',
+        progress: taskData.progress ?? 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
+      mockTasks.set(id, record);
+      return { data: record, error: null };
     }
     
     const { data, error } = await supabase
@@ -369,17 +348,22 @@ export class DatabaseService {
     if (status === 'running' && !progress) updateData.started_at = new Date().toISOString();
     
     if (!supabase) {
-      return { 
-        data: { 
-          id: taskId, 
-          status,
-          progress: progress || 0,
-          error_message: errorMessage,
-          started_at: status === 'running' ? new Date().toISOString() : undefined,
-          completed_at: status === 'completed' ? new Date().toISOString() : undefined
-        }, 
-        error: null 
+      const existing = mockTasks.get(taskId);
+      if (!existing) {
+        const data = { id: taskId, status, progress: progress || 0, error_message: errorMessage };
+        return { data, error: null };
+      }
+      const updated = {
+        ...existing,
+        status,
+        progress: progress ?? existing.progress ?? 0,
+        error_message: errorMessage ?? existing.error_message,
+        started_at: status === 'running' ? (existing.started_at || new Date().toISOString()) : existing.started_at,
+        completed_at: status === 'completed' ? new Date().toISOString() : existing.completed_at,
+        updated_at: new Date().toISOString()
       };
+      mockTasks.set(taskId, updated);
+      return { data: updated, error: null };
     }
     
     const { data, error } = await supabase
@@ -394,6 +378,7 @@ export class DatabaseService {
 
   static async deleteTask(id: string) {
     if (!supabase) {
+      mockTasks.delete(id);
       return { error: null };
     }
     

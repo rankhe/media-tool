@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, Tag, Space, Modal, Form, Input, Select, message, Tabs, Statistic, Row, Col, Badge, Tooltip, Popconfirm, DatePicker, Checkbox, Drawer } from 'antd';
+import { Card, Table, Button, Tag, Space, Modal, Form, Input, Select, message, Tabs, Statistic, Row, Col, Badge, Tooltip, Popconfirm, DatePicker, Checkbox, Drawer, Radio, Upload } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, PauseCircleOutlined, SyncOutlined, BellOutlined, UserOutlined, MessageOutlined, SettingOutlined, DashboardOutlined } from '@ant-design/icons';
 import monitoringService, { MonitoringUser, MonitoredPost, WebhookConfig, MonitoringStats, SchedulerStatus } from '../services/monitoringService';
 
@@ -7,7 +7,7 @@ const { TabPane } = Tabs;
 const { Option } = Select;
 
 const SocialMonitoring: React.FC = () => {
-  const [activeTab, setActiveTab] = useState('users');
+  const [activeTab, setActiveTab] = useState('posts');
   const [monitoringUsers, setMonitoringUsers] = useState<MonitoringUser[]>([]);
   const [monitoredPosts, setMonitoredPosts] = useState<MonitoredPost[]>([]);
   const [webhookConfigs, setWebhookConfigs] = useState<WebhookConfig[]>([]);
@@ -23,6 +23,10 @@ const SocialMonitoring: React.FC = () => {
   const [fetchingUserId, setFetchingUserId] = useState<number | null>(null);
   const [fetchingUsername, setFetchingUsername] = useState<string>('');
   const [form] = Form.useForm();
+  const [zhihuModalVisible, setZhihuModalVisible] = useState(false);
+  const [zhihuStatus, setZhihuStatus] = useState<{ cookie_string: boolean; cookies_json: boolean } | null>(null);
+  const [zhihuCookieString, setZhihuCookieString] = useState('');
+  const [zhihuFile, setZhihuFile] = useState<File | undefined>(undefined);
   const [postPageSize, setPostPageSize] = useState(20);
   const [postPage, setPostPage] = useState(1);
   const [filterPlatform, setFilterPlatform] = useState<string | undefined>(undefined);
@@ -32,6 +36,10 @@ const SocialMonitoring: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [detailVisible, setDetailVisible] = useState(false);
   const [currentPost, setCurrentPost] = useState<MonitoredPost | null>(null);
+  const [publishVisible, setPublishVisible] = useState(false);
+  const [publishPost, setPublishPost] = useState<MonitoredPost | null>(null);
+  const [publishType, setPublishType] = useState<'idea' | 'article'>('idea');
+  const [publishTitle, setPublishTitle] = useState<string>('');
 
   // Fetch initial data
   useEffect(() => {
@@ -41,12 +49,13 @@ const SocialMonitoring: React.FC = () => {
   const fetchInitialData = async () => {
     setLoading(true);
     try {
-      const [usersRes, webhooksRes, statsRes, platformsRes, schedulerRes] = await Promise.all([
+      const [usersRes, webhooksRes, statsRes, platformsRes, schedulerRes, zhihuCfg] = await Promise.all([
         monitoringService.getMonitoringUsers(),
         monitoringService.getWebhookConfigs(),
         monitoringService.getMonitoringStats(),
         monitoringService.getPlatforms(),
-        monitoringService.getSchedulerStatus()
+        monitoringService.getSchedulerStatus(),
+        monitoringService.getZhihuConfigStatus().catch(() => ({ data: { cookie_string: false, cookies_json: false } }))
       ]);
 
       setMonitoringUsers(usersRes.data);
@@ -54,12 +63,103 @@ const SocialMonitoring: React.FC = () => {
       setMonitoringStats(statsRes.data);
       setPlatforms(platformsRes.data);
       setSchedulerStatus(schedulerRes.data);
+      setZhihuStatus(zhihuCfg.data);
       await loadPosts(1, postPageSize);
     } catch (error) {
       message.error('Failed to fetch monitoring data');
       console.error('Error fetching monitoring data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const stripHtml = (html: string) => {
+    if (!html) return '';
+    const text = html
+      .replace(/<br\s*\/>/gi, '\n')
+      .replace(/<br\s*>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+    return text;
+  };
+
+  const handlePublishZhihu = (post: MonitoredPost) => {
+    setPublishPost(post);
+    setPublishType('idea');
+    setPublishTitle('');
+    setPublishVisible(true);
+  };
+
+  const doPublishZhihu = async () => {
+    if (!publishPost) return;
+    try {
+      const contentText = stripHtml(publishPost.post_content || '');
+      const parts: string[] = [];
+      if (publishType === 'article' && publishTitle) {
+        parts.push(`# ${publishTitle}`);
+      }
+      parts.push(contentText);
+      if (publishPost.post_images && publishPost.post_images.length > 0) {
+        parts.push('\n图片：');
+        (publishPost.post_images as any[]).forEach((img) => parts.push(String(img)));
+      }
+      if (publishPost.post_videos && publishPost.post_videos.length > 0) {
+        parts.push('\n视频：');
+        (publishPost.post_videos as any[]).forEach((vid) => parts.push(String(vid)));
+      }
+      if (publishPost.post_url) {
+        parts.push(`\n原帖链接：${publishPost.post_url}`);
+      }
+      const finalText = parts.join('\n');
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(finalText);
+        message.success('内容已复制到剪贴板');
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = finalText;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        message.success('内容已复制到剪贴板');
+      }
+
+      const url = publishType === 'idea' 
+        ? 'https://www.zhihu.com/creator' 
+        : 'https://zhuanlan.zhihu.com';
+      window.open(url, '_blank');
+      setPublishVisible(false);
+    } catch (error) {
+      message.error('发送到知乎失败');
+    }
+  };
+
+  const doPublishZhihuAuto = async () => {
+    if (!publishPost) return;
+    try {
+      const contentText = stripHtml(publishPost.post_content || '');
+      const images = (publishPost.post_images as any[])?.map((i) => String(i)) || [];
+      const res = await monitoringService.publishToZhihu({
+        type: publishType,
+        title: publishType === 'article' ? publishTitle : undefined,
+        content: contentText,
+        images,
+        source_url: publishPost.post_url || undefined,
+      });
+      if (res.success) {
+        message.success('已提交到后端自动发布，请前往知乎确认');
+        setPublishVisible(false);
+      } else {
+        message.error(res.error || '自动发布失败');
+      }
+    } catch (e) {
+      message.error('自动发布失败');
     }
   };
 
@@ -400,6 +500,7 @@ const SocialMonitoring: React.FC = () => {
           <a href={record.post_url} target="_blank" rel="noopener noreferrer">
             View Post
           </a>
+          <Button size="small" type="primary" onClick={() => handlePublishZhihu(record)}>发送到知乎</Button>
         </Space>
       )
     }
@@ -440,6 +541,7 @@ const SocialMonitoring: React.FC = () => {
               <Button icon={<PlusOutlined />} onClick={handleAddWebhook}>
                 Add Webhook
               </Button>
+              <Button onClick={() => setZhihuModalVisible(true)}>Zhihu Config</Button>
             </div>
           </div>
         </Card>
@@ -532,6 +634,15 @@ const SocialMonitoring: React.FC = () => {
               <Button type="primary" onClick={() => loadPosts(1, postPageSize)} icon={<SyncOutlined />}>刷新</Button>
             </Space>
           </Card>
+          {monitoredPosts.length === 0 && (
+            <Card className="mb-3">
+              <div style={{ color: '#666' }}>当前没有已拉取的帖子。请在“Monitoring Users”列表中选择账号后点击“Fetch Posts”，或等待定时调度完成拉取。</div>
+              <div style={{ marginTop: 12 }}>
+                <Button onClick={() => setActiveTab('users')} icon={<UserOutlined />}>前往 Monitoring Users</Button>
+                <Button style={{ marginLeft: 8 }} type="primary" onClick={() => loadPosts(1, postPageSize)} icon={<SyncOutlined />}>刷新列表</Button>
+              </div>
+            </Card>
+          )}
           <Table
             columns={postColumns}
             dataSource={monitoredPosts}
@@ -760,6 +871,71 @@ const SocialMonitoring: React.FC = () => {
             </>
           )}
         </Form>
+      </Modal>
+
+      <Modal
+        title="Zhihu 登录配置"
+        visible={zhihuModalVisible}
+        onOk={async () => {
+          try {
+            await monitoringService.setZhihuConfig({ cookie_string: zhihuCookieString, cookies_json_file: zhihuFile });
+            const status = await monitoringService.getZhihuConfigStatus();
+            setZhihuStatus(status.data);
+            message.success('配置已保存');
+            setZhihuModalVisible(false);
+          } catch (e) {
+            message.error('保存失败');
+          }
+        }}
+        onCancel={() => setZhihuModalVisible(false)}
+        okText="保存"
+      >
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ color: '#666' }}>可二选一：填写 Cookie 字符串 或 上传浏览器导出的 Cookie JSON。</div>
+        </div>
+        <Form layout="vertical">
+          <Form.Item label="Cookie 字符串">
+            <Input.TextArea value={zhihuCookieString} onChange={(e) => setZhihuCookieString(e.target.value)} rows={4} placeholder="name=value; name2=value2" />
+          </Form.Item>
+          <Form.Item label="Cookie JSON 文件">
+            <input type="file" accept="application/json" onChange={(e) => setZhihuFile(e.target.files?.[0])} />
+          </Form.Item>
+        </Form>
+        {zhihuStatus && (
+          <div style={{ marginTop: 12, color: '#666' }}>当前状态：字符串 {zhihuStatus.cookie_string ? '已配置' : '未配置'}，JSON {zhihuStatus.cookies_json ? '已配置' : '未配置'}</div>
+        )}
+      </Modal>
+
+      <Modal
+        title="发送到知乎"
+        visible={publishVisible}
+        onOk={doPublishZhihu}
+        onCancel={() => setPublishVisible(false)}
+        okText="前往知乎发布"
+        footer={[
+          <Button key="auto" type="primary" onClick={doPublishZhihuAuto}>自动投稿到知乎</Button>,
+          <Button key="manual" onClick={doPublishZhihu}>复制并前往发布</Button>,
+        ]}
+      >
+        <div style={{ marginBottom: 12 }}>
+          <Radio.Group value={publishType} onChange={(e) => setPublishType(e.target.value)}>
+            <Radio.Button value="idea">想法</Radio.Button>
+            <Radio.Button value="article">文章</Radio.Button>
+          </Radio.Group>
+        </div>
+        {publishType === 'article' && (
+          <Form layout="vertical">
+            <Form.Item label="文章标题">
+              <Input value={publishTitle} onChange={(e) => setPublishTitle(e.target.value)} placeholder="请输入文章标题" />
+            </Form.Item>
+          </Form>
+        )}
+        <div style={{ color: '#666', fontSize: 12 }}>将复制帖子内容到剪贴板并打开知乎发布页面，请在新页面中粘贴并完善后发布。</div>
+        <div style={{ marginTop: 8 }}>
+          <a href="https://www.zhihu.com/creator" target="_blank" rel="noreferrer">知乎创作中心</a>
+          <span style={{ margin: '0 8px' }}>·</span>
+          <a href="https://zhuanlan.zhihu.com" target="_blank" rel="noreferrer">知乎专栏</a>
+        </div>
       </Modal>
 
       <Drawer
